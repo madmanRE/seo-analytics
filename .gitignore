@@ -1,2 +1,4 @@
 .idea
 .venv
+.env
+/auth/gsc_auth/client_secret.json
