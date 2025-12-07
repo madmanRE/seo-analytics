@@ -6,7 +6,7 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
 
-def gsc_fetch_all(creds: Credentials, site_url: str, start_date: str, end_date: str, dimension: str):
+def gsc_fetch_all(creds: Credentials, site_url: str, start_date: str, end_date: str, dimension: str, page_filter):
     service = build("searchconsole", "v1", credentials=creds)
 
     LIMIT = 25000
@@ -22,6 +22,21 @@ def gsc_fetch_all(creds: Credentials, site_url: str, start_date: str, end_date: 
             "rowLimit": LIMIT,
             "startRow": offset
         }
+
+        if page_filter is not None:
+            body.update({
+                'dimensionFilterGroups': [
+                    {
+                        'filters': [
+                            {
+                                'dimension': 'page',
+                                'operator': 'contains',
+                                'expression': page_filter,
+                            },
+                        ]
+                    }
+                ]
+            })
 
         try:
             response = service.searchanalytics().query(
@@ -54,6 +69,8 @@ def gsc_fetch_all(creds: Credentials, site_url: str, start_date: str, end_date: 
         for r in results
     ])
 
+    len_ = len(df)
+
     if dimension == "page":
         df["page"] = df["page"].apply(lambda u: urlparse(u).path)
 
@@ -64,15 +81,16 @@ def gsc_fetch_all(creds: Credentials, site_url: str, start_date: str, end_date: 
             "position": "mean"
         }).reset_index()
 
-    return df
+    return df, len_
 
 
-def get_gsc_pages(creds: Credentials, site_url: str, start_date: str, end_date: str) -> pd.DataFrame:
-    return gsc_fetch_all(creds, site_url, start_date, end_date, dimension="page")
+def get_gsc_pages(creds: Credentials, site_url: str, start_date: str, end_date: str, page_filter: str) -> pd.DataFrame:
+    return gsc_fetch_all(creds, site_url, start_date, end_date, dimension="page", page_filter=page_filter)
 
 
-def get_gsc_queries(creds: Credentials, site_url: str, start_date: str, end_date: str) -> pd.DataFrame:
-    return gsc_fetch_all(creds, site_url, start_date, end_date, dimension="query")
+def get_gsc_queries(creds: Credentials, site_url: str, start_date: str, end_date: str,
+                    page_filter: str) -> pd.DataFrame:
+    return gsc_fetch_all(creds, site_url, start_date, end_date, dimension="query", page_filter=page_filter)
 
 
 def fetch_yandex_analytics_all(
@@ -81,8 +99,10 @@ def fetch_yandex_analytics_all(
         host_id: str,
         start_date: str,
         end_date: str,
+        page_filter: str,
         text_type: str = "URL",  # "URL" или "QUERY"
         limit: int = 500,
+        stop_iter_n: int = 50,
 ) -> pd.DataFrame:
     url = f"https://api.webmaster.yandex.net/v4/user/{user_id}/hosts/{host_id}/query-analytics/list"
     headers = {
@@ -95,7 +115,7 @@ def fetch_yandex_analytics_all(
     iter_n = 0
 
     while True:
-        if iter_n > 50:
+        if iter_n > stop_iter_n:
             break
 
         payload = {
@@ -106,6 +126,19 @@ def fetch_yandex_analytics_all(
             'offset': offset,
             'limit': limit,
         }
+
+        if page_filter is not None:
+            payload.update({
+                "filters": {
+                    "text_filters": [
+                        {
+                            "text_indicator": "URL",
+                            "operation": "TEXT_CONTAINS",
+                            "value": page_filter
+                        }
+                    ],
+                }
+            })
 
         try:
             resp = httpx.post(url, headers=headers, json=payload, timeout=30)
@@ -162,20 +195,28 @@ def fetch_yandex_analytics_all(
 
     return df
 
-def get_yandex_pages(oauth_token: str, user_id: int, host_id: str, start_date: str, end_date: str, limit=500):
-    return fetch_yandex_analytics_all(oauth_token, user_id, host_id, start_date, end_date, text_type="URL", limit=limit)
 
-def get_yandex_queries(oauth_token: str, user_id: int, host_id: str, start_date: str, end_date: str, limit=500):
-    return fetch_yandex_analytics_all(oauth_token, user_id, host_id, start_date, end_date, text_type="QUERY", limit=limit)
+def get_yandex_pages(oauth_token: str, user_id: int, host_id: str, start_date: str, end_date: str, page_filter: str,
+                     limit=500,
+                     stop_iter_n=50):
+    return fetch_yandex_analytics_all(oauth_token, user_id, host_id, start_date, end_date, text_type="URL", limit=limit,
+                                      stop_iter_n=stop_iter_n, page_filter=page_filter)
+
+
+def get_yandex_queries(oauth_token: str, user_id: int, host_id: str, start_date: str, end_date: str, page_filter: str,
+                       limit=500,
+                       stop_iter_n=50):
+    return fetch_yandex_analytics_all(oauth_token, user_id, host_id, start_date, end_date, text_type="QUERY",
+                                      limit=limit, stop_iter_n=stop_iter_n, page_filter=page_filter)
 
 
 def get_metrika_data(
-    token: str,
-    counter_id: int,
-    date1: str,
-    date2: str,
+        token: str,
+        counter_id: int,
+        date1: str,
+        date2: str,
+        page_filter: str,
 ):
-
     url = "https://api-metrika.yandex.net/stat/v1/data"
 
     headers = {
@@ -192,6 +233,11 @@ def get_metrika_data(
         "limit": 100000,
         "accuracy": 1,
     }
+
+    if page_filter is not None:
+        params.update({
+            "filters": f"ym:s:trafficSource=='organic' AND ym:s:startURLPath=@'{page_filter}'"
+        })
 
     resp = httpx.get(url, headers=headers, params=params)
     resp.raise_for_status()

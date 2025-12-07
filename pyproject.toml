@@ -11,11 +11,15 @@ dependencies = [
     "google-auth-oauthlib>=1.2.2",
     "httpx>=0.28.1",
     "itsdangerous>=2.2.0",
+    "nltk>=3.9.2",
     "openpyxl>=3.1.5",
     "pandas>=2.3.3",
+    "plotly>=6.5.0",
+    "pymystem3>=0.2.0",
     "pytest>=9.0.1",
     "python-dotenv>=1.2.1",
     "ruff>=0.14.8",
+    "scikit-learn>=1.7.2",
 ]
 
 [tool.ruff]
