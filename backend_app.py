@@ -47,12 +47,20 @@ async def analyze_traffic(
         {
             "request": request,
             "comparison_df": result.get('comparison_df'),
+            "comparison_df_llm": result.get('comparison_df_llm'),
             "position_interval_g_data_df": result.get('position_interval_g_data_df'),
             "position_interval_y_data_df": result.get('position_interval_y_data_df'),
             "fig_dashboard_plot": result.get('fig_dashboard_plot'),
+            "position_interval_data_df_llm": result.get('position_interval_data_df_llm'),
             "important_words_stats_df": result.get('important_words_stats_df'),
             "important_words_stats_heatmap_plot": result.get('important_words_stats_heatmap_plot'),
+            "important_words_stats_df_llm": result.get('important_words_stats_df_llm'),
             "plot_top_words_plotly_plot": result.get('plot_top_words_plotly_plot'),
-            "long_tails_queries_df": result.get('long_tails_queries_df')
+            "long_tails_queries_df": result.get('long_tails_queries_df'),
+            "long_tails_queries_df_llm": result.get('long_tails_queries_df_llm'),
+            "clusters_df": result.get('clusters_df'),
+            "clusters_df_llm": result.get('clusters_df_llm'),
+            "good_queries_predicted_df": result.get('good_queries_predicted_df'),
+            "good_queries_predicted_df_llm": result.get('good_queries_predicted_df_llm')
         }
     )

@@ -5,8 +5,17 @@ import nltk
 import numpy as np
 import pandas as pd
 from nltk.corpus import stopwords
-from sklearn.decomposition import NMF
+
+from sklearn.decomposition import TruncatedSVD
 from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.linear_model import LogisticRegression
+from sklearn.cluster import AgglomerativeClustering
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.decomposition import NMF
+
+import hdbscan
+import umap
+from reports.llm import make_llm_response
 
 nltk.download("stopwords")
 STOPWORDS = stopwords.words("russian") + stopwords.words("english")
@@ -513,6 +522,109 @@ def get_long_tail_queries(df):
     return long_tails_queries
 
 
+def fast_clusters_with_priority_full(df):
+    df = df.copy()
+    queries = df["query"].tolist()
+
+    vectorizer = TfidfVectorizer(
+        stop_words=STOPWORDS,
+        min_df=5,
+        max_df=0.8,
+        max_features=2000
+    )
+    vectors = vectorizer.fit_transform(queries)
+
+    reducer = umap.UMAP(
+        n_neighbors=15,
+        n_components=15,
+        metric="cosine",
+        low_memory=True,
+        random_state=42,
+        n_jobs=-1
+    )
+    umap_vectors = reducer.fit_transform(vectors)
+
+    clusterer = hdbscan.HDBSCAN(
+        min_cluster_size=5,
+        min_samples=5,
+        metric="euclidean",
+        cluster_selection_method="leaf"
+    )
+
+    df["Cluster"] = clusterer.fit_predict(umap_vectors)
+    df_filtered = df[df["Cluster"] != -1].copy()
+
+    agg = df_filtered.groupby("Cluster").agg({
+        "query": "count",
+        "full_impressions": "sum",
+        "full_clicks": "sum",
+        "position_g": "mean",
+        "position_y": "mean"
+    }).rename(columns={"query": "query_count"}).reset_index()
+
+    scaler = MinMaxScaler()
+    agg["norm_impressions"] = scaler.fit_transform(agg[["full_impressions"]])
+    agg["norm_query_count"] = scaler.fit_transform(agg[["query_count"]])
+    agg["norm_clicks"] = scaler.fit_transform(agg[["full_clicks"]])
+    agg["norm_low_clicks"] = 1 - agg["norm_clicks"]
+
+    agg["avg_position"] = (agg["position_g"] + agg["position_y"]) / 2
+    agg["norm_position"] = scaler.fit_transform(agg[["avg_position"]])
+    agg["norm_low_positions"] = 1 - agg["norm_position"]
+
+    agg["priority"] = (
+            agg["norm_impressions"] * 0.45 +
+            agg["norm_query_count"] * 0.25 +
+            agg["norm_low_clicks"] * 0.20 +
+            agg["norm_low_positions"] * 0.10
+    )
+
+    top_cluster_ids = agg.sort_values("priority", ascending=False).head(10)["Cluster"].tolist()
+    agg_top = agg[agg["Cluster"].isin(top_cluster_ids)].copy()
+
+    cluster_queries = df_filtered[df_filtered["Cluster"].isin(top_cluster_ids)].groupby("Cluster")["query"].apply(list)
+    agg_top["queries_in_cluster"] = agg_top["Cluster"].map(cluster_queries)
+
+    cols = [
+        "Cluster", "priority", "query_count",
+        "full_impressions", "full_clicks", "avg_position",
+        "queries_in_cluster"
+    ]
+
+    return agg_top[cols].sort_values(by="priority", ascending=False)
+
+
+def predict_good_queries(df):
+    df = df.copy()
+
+    impq25 = df["full_impressions"].quantile(0.25)
+    df = df[df["full_impressions"] > impq25]
+
+    df["good_queries"] = (df["full_clicks"] > 0).astype(int)
+
+    vectorizer = TfidfVectorizer(
+        stop_words=STOPWORDS,
+        max_features=2000,
+        min_df=5,
+        max_df=0.9
+    )
+    X = vectorizer.fit_transform(df["query"])
+    y = df["good_queries"]
+
+    model = LogisticRegression(max_iter=500)
+    model.fit(X, y)
+
+    df["prob_good_query"] = model.predict_proba(X)[:, 1]
+    df = df[df["prob_good_query"] > 0.6]
+    df = df[df["full_clicks"] < 10]
+    df["priority"] = np.log(df["full_impressions"]) * df["prob_good_query"]
+
+    result_df = df[["query", "full_clicks", "full_impressions", "position_g", "position_y", "prob_good_query",
+                    "priority"]].sort_values("priority", ascending=False).head(50)
+
+    return result_df.head(100)
+
+
 def get_text_report(df):
     df = df.copy()
     result = {}
@@ -527,6 +639,8 @@ def get_text_report(df):
     try:
         comparison_df = search_engine_comparison(df)
         result['comparison_df'] = comparison_df
+        comparison_df_llm = make_llm_response('comparison_df', comparison_df)
+        result['comparison_df_llm'] = comparison_df_llm
     except Exception as e:
         result['comparison_df_error'] = f"Ошибка сравнения поисковиков: {str(e)}"
         result['comparison_df'] = None
@@ -537,6 +651,11 @@ def get_text_report(df):
         result['position_interval_g_data_df'] = position_interval_g_data_df
         result['position_interval_y_data_df'] = position_interval_y_data_df
         result['fig_dashboard_plot'] = fig_dashboard_plot
+        position_interval_data_df_llm = make_llm_response("position_interval_data_df",
+                                                          (position_interval_g_data_df.merge(
+                                                              position_interval_y_data_df, left_index=True,
+                                                              right_index=True, how="outer")))
+        result['position_interval_data_df_llm'] = position_interval_data_df_llm
     except Exception as e:
         result['position_comparison_error'] = f"Ошибка сравнения позиций: {str(e)}"
         result['position_interval_g_data_df'] = None
@@ -546,6 +665,8 @@ def get_text_report(df):
     try:
         important_words_stats_df = define_important_words(df)
         result['important_words_stats_df'] = important_words_stats_df
+        important_words_stats_df_llm = make_llm_response("important_words_stats_df", important_words_stats_df)
+        result['important_words_stats_df_llm'] = important_words_stats_df_llm
     except Exception as e:
         result['important_words_error'] = f"Ошибка анализа важных слов: {str(e)}"
         result['important_words_stats_df'] = None
@@ -572,8 +693,28 @@ def get_text_report(df):
     try:
         long_tails_queries_df = get_long_tail_queries(df)
         result['long_tails_queries_df'] = long_tails_queries_df
+        long_tails_queries_df_llm = make_llm_response("long_tails_queries_df", long_tails_queries_df)
+        result['long_tails_queries_df_llm'] = long_tails_queries_df_llm
     except Exception as e:
         result['long_tail_error'] = f"Ошибка анализа длинных хвостов: {str(e)}"
         result['long_tails_queries_df'] = None
+
+    try:
+        clusters_df = fast_clusters_with_priority_full(df)
+        result['clusters_df'] = clusters_df
+        clusters_df_llm = make_llm_response("clusters_df", clusters_df)
+        result['clusters_df_llm'] = clusters_df_llm
+    except Exception as e:
+        result['clusters_df_error'] = f"Ошибка анализа кластеров: {str(e)}"
+        result['clusters_df'] = None
+
+    try:
+        good_queries_predicted_df = predict_good_queries(df)
+        result['good_queries_predicted_df'] = good_queries_predicted_df
+        good_queries_predicted_df_llm = make_llm_response("good_queries_predicted_df", good_queries_predicted_df)
+        result['good_queries_predicted_df_llm'] = good_queries_predicted_df_llm
+    except Exception as e:
+        result['good_queries_predicted_df_error'] = f"Ошибка в прогнозировании: {str(e)}"
+        result['good_queries_predicted_df'] = None
 
     return result
