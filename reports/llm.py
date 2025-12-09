@@ -109,8 +109,9 @@ def make_llm_response(question, data):
             },
         ]
         response = client.chat.completions.create(
-            model="openai/gpt-oss-20b:free",
+            model="amazon/nova-2-lite-v1:free",
             messages=messages,
+            temperature=0.2
         )
 
         data = response.choices[0].message.content
