@@ -3,7 +3,7 @@ import os
 from google_auth_oauthlib.flow import Flow
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CLIENT_SECRET_FILE = os.path.join(BASE_DIR, "client_secret.json")
+CLIENT_SECRET_FILE = os.path.join(BASE_DIR, "client_secret_example.json")
 
 SCOPES = ["https://www.googleapis.com/auth/webmasters.readonly"]
 REDIRECT_URI = "http://127.0.0.1:8000/auth/google/callback"
